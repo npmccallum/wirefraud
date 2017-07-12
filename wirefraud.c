@@ -63,13 +63,9 @@ static const char *usage =
 "\n"
 "\nNOTE WELL: This program does not do any interface preparation or management."
 "\n           It is your responsibility to clone the MAC address of the client"
-"\n           device onto the WAN interface and bring it up. Similarly, you are"
-"\n           responsible to bring up the LAN interface in promiscuous mode."
-"\n"
-"\n           Usually, WAN configuration just follows your standard operating"
-"\n           system conventions (NetworkManager, init scripts, et cetera). If "
-"\n           these conventions don't work for your LAN port as well, this"
-"\n           command should be sufficient: ifconfig LAN promisc up"
+"\n           device onto the WAN interface and bring it up. Usually, WAN"
+"\n           configuration just follows your standard operating system"
+"\n           conventions (NetworkManager, init scripts, et cetera)."
 "\n"
 "\n";
 
@@ -80,9 +76,14 @@ mksock(const char *ifname)
         .sll_protocol = htons(ETH_P_PAE),
         .sll_family = PF_PACKET,
     };
+    struct packet_mreq mreq = {
+        .mr_address = "\x01\x80\xC2\x00\x00\x03",
+        .mr_type = PACKET_MR_MULTICAST,
+        .mr_alen = ETH_ALEN,
+    };
     int sock;
 
-    addr.sll_ifindex = if_nametoindex(ifname);
+    mreq.mr_ifindex = addr.sll_ifindex = if_nametoindex(ifname);
     if (addr.sll_ifindex == 0)
         return -errno;
 
@@ -93,6 +94,13 @@ mksock(const char *ifname)
 
     /* Only receive packets from the specified interface. */
     if (bind(sock, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
+        close(sock);
+        return -errno;
+    }
+
+    /* Receive packets on the non-TPMR bridge group address. */
+    if (setsockopt(sock, SOL_PACKET, PACKET_ADD_MEMBERSHIP,
+                   &mreq, sizeof(mreq)) < 0) {
         close(sock);
         return -errno;
     }
