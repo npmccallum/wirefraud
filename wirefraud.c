@@ -44,29 +44,32 @@ typedef struct __attribute__((packed)) {
     uint8_t body[1508];
 } eth_frame_t;
 
-static const char *sopts = "dw:l:";
+static const char *sopts = "hfw:d:";
 static const struct option lopts[] = {
-    { "wan",       required_argument, .val = 'w' },
-    { "lan",       required_argument, .val = 'l' },
-    { "daemonize", no_argument,       .val = 'd' },
+    { "help",       no_argument,       .val = 'h' },
+    { "wan",        required_argument, .val = 'w' },
+    { "dev",        required_argument, .val = 'd' },
+    { "foreground", no_argument,       .val = 'f' },
     {}
 };
 
 static const char *usage =
-"Usage: wirefraud -w WAN -l LAN [-d]"
+"Usage: wirefraud -w WAN -d DEV [-f]"
 "\n"
-"\nThis program proxies 802.1x packets between the specified WAN and LAN ports."
+"\nWirefraud proxies 802.1x between the specified WAN and DEV interfaces."
 "\n"
-"\nBasically, you connect a client device (and nothing else) to the LAN port"
-"\nand connect the uplink to the WAN port. This program will proxy only the"
-"\n802.1x traffic between these two ports. Normally, this program will never"
-"\nexit. To run this program in daemon (background) mode, use the -d option."
+"\nBasically, you connect a client device (and nothing else) to the DEV"
+"\ninterface and connect the uplink to the WAN interface. Wirefraud will"
+"\nproxy only the 802.1x traffic between these two interfaces."
 "\n"
-"\nNOTE WELL: This program does not do any interface preparation or management."
-"\n           It is your responsibility to clone the MAC address of the client"
-"\n           device onto the WAN interface and bring it up. Usually, WAN"
-"\n           configuration just follows your standard operating system"
-"\n           conventions (NetworkManager, init scripts, et cetera)."
+"\nBy default, Wirefraud will daemonize for background operation. To run"
+"\nit in the foreground, use the -f option."
+"\n"
+"\nWirefraud does not do any interface preparation or management. Therefore,"
+"\na few extra steps may be necessary. If your network provider performs MAC"
+"\naddress validation, you will need to clone the MAC address of the device"
+"\nto the WAN interface. Likewise, if your network provider uses VLANs, you"
+"\nshould set up VLAN interfaces to ensure proper tagging."
 "\n"
 "\n";
 
@@ -136,22 +139,22 @@ main(int argc, char* argv[])
         { .events = POLLIN | POLLPRI },
         { .events = POLLIN | POLLPRI },
     };
-    bool daemonize = false;
     ifname_t wan = {};
-    ifname_t lan = {};
+    ifname_t dev = {};
+    bool fg = false;
 
     for (int o; (o = getopt_long(argc, argv, sopts, lopts, NULL)) != -1; ) {
         switch (o) {
         case 'w': snprintf(wan, sizeof(wan), "%s", optarg); break;
-        case 'l': snprintf(lan, sizeof(lan), "%s", optarg); break;
-        case 'd': daemonize = true; break;
+        case 'd': snprintf(dev, sizeof(dev), "%s", optarg); break;
+        case 'f': fg = true; break;
         default:
             fprintf(stderr, "%s", usage);
             return EX_USAGE;
         }
     }
 
-    if (!wan[0] || !lan[0]) {
+    if (!wan[0] || !dev[0]) {
         fprintf(stderr, "%s", usage);
         return EX_USAGE;
     }
@@ -162,13 +165,13 @@ main(int argc, char* argv[])
         goto error;
     }
 
-    pfds[1].fd = mksock(lan);
+    pfds[1].fd = mksock(dev);
     if (pfds[1].fd < 0) {
         fprintf(stderr, "Error opening LAN socket! %m\n");
         goto error;
     }
 
-    if (daemonize) {
+    if (!fg) {
         pid_t pid;
 
         pid = fork();
