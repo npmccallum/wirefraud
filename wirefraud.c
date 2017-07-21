@@ -31,6 +31,7 @@
 #include <sysexits.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <string.h>
 #include <getopt.h>
 #include <errno.h>
 #include <stdio.h>
@@ -69,8 +70,10 @@ static const char *usage =
 "\n"
 "\n";
 
+typedef char ifname_t[IFNAMSIZ];
+
 static int
-mksock(const char *ifname)
+mksock(const ifname_t ifname)
 {
     struct sockaddr_ll addr = {
         .sll_protocol = htons(ETH_P_PAE),
@@ -108,6 +111,24 @@ mksock(const char *ifname)
     return sock;
 }
 
+static bool
+isup(const ifname_t ifname)
+{
+    struct ifreq ifr = { .ifr_addr.sa_family = AF_INET };
+    bool ret = false;
+    int sock = -1;
+
+    strcpy(ifr.ifr_name, ifname);
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) {
+        ret = ioctl(sock, SIOCGIFADDR, &ifr) == 0;
+        close(sock);
+    }
+
+    return ret;
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -115,9 +136,9 @@ main(int argc, char* argv[])
         { .events = POLLIN | POLLPRI },
         { .events = POLLIN | POLLPRI },
     };
-    char wan[IFNAMSIZ + 1] = {};
-    char lan[IFNAMSIZ + 1] = {};
     bool daemonize = false;
+    ifname_t wan = {};
+    ifname_t lan = {};
 
     for (int o; (o = getopt_long(argc, argv, sopts, lopts, NULL)) != -1; ) {
         switch (o) {
@@ -182,6 +203,13 @@ main(int argc, char* argv[])
                         continue;
                     goto error;
                 }
+
+                /* While the WAN is up, we drop packets. We do this to
+                 * prevent additional packets from causing network
+                 * connectivity to drop. However, if the WAN goes down,
+                 * then we can start forwarding again. */
+                if (isup(wan))
+                    continue;
 
                 fprintf(stderr, "%c src:" ADDRP " dst:" ADDRP " prt:%02hX %zd\n",
                         i == 0 ? '>' : '<',
